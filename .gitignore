@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+
+# Environment files: templates remain tracked
+.env
+.env.*
+!.env.example
+
+# Build and coverage output
+dist/
+build/
+coverage/
+.expo/
+.expo-shared/
+web-build/
+
+# Expo and React Native generated files
+*.jks
+*.keystore
+*.mobileprovision
+*.orig.*
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Operating system files
+.DS_Store
+Thumbs.db
+Desktop.ini
