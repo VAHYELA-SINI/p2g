@@ -1,26 +1,41 @@
 # Dependencies
 node_modules/
+/.pnp
+.pnp.js
 
-# Environment files: templates remain tracked
+# Environment files: real secrets never committed, templates remain tracked
 .env
 .env.*
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
 !.env.example
+!**/.env.example
 
-# Build and coverage output
+# Build and production output
 dist/
 build/
-coverage/
-.expo/
-.expo-shared/
+out/
 web-build/
 
-# Expo and React Native generated files
+# Testing and code coverage
+coverage/
+*.lcov
+.nyc_output/
+
+# Expo and React Native generated artifacts
+.expo/
+.expo-shared/
 *.jks
+*.p8
+*.p12
+*.key
 *.keystore
 *.mobileprovision
 *.orig.*
 
-# Logs
+# Runtime logs
 logs/
 *.log
 npm-debug.log*
@@ -28,13 +43,12 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# IDE and editor files
-.vscode/
+# IDE, editor and OS metadata
+.vscode/*
+!.vscode/extensions.json
 .idea/
 *.swp
 *.swo
-
-# Operating system files
 .DS_Store
 Thumbs.db
 Desktop.ini

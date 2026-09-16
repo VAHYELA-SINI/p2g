@@ -1,202 +1,492 @@
-# P2G Architecture
+# P2G System Architecture Specification
 
-## 1. System architecture
+## 1. Overall System Architecture
 
-P2G is a single-vendor platform with three deployable applications:
+P2G is a **single-vendor** commerce and food-ordering platform engineered for a single business merchant. It connects customer ordering via a cross-platform mobile application and operational store management via a web-based admin dashboard, backed by a single centralized REST API.
 
 ```text
-Customer mobile app ─┐
-                     ├── HTTPS REST API ── MongoDB Atlas
-Admin web dashboard ─┘        │
-                              ├── Paystack
-                              └── Cloudinary
++-------------------------------------------------------------------------+
+|                              CLIENT TIER                                |
+|                                                                         |
+|   +-------------------------------+   +-----------------------------+   |
+|   |     Customer Mobile App       |   |    Admin Web Dashboard      |   |
+|   |  (React Native + Expo Router) |   |        (React + Vite)       |   |
+|   +---------------+---------------+   +--------------+--------------+   |
++-------------------|----------------------------------|------------------+
+                    |                                  |
+                    | HTTPS REST API (JSON)            | HTTPS REST API (JSON)
+                    v                                  v
++-------------------------------------------------------------------------+
+|                              BACKEND TIER                               |
+|                                                                         |
+|   +-----------------------------------------------------------------+   |
+|   |                       Express.js REST API                       |   |
+|   |              (Node.js >= 20, Layered Architecture)              |   |
+|   +-------------------------------+---------------------------------+   |
++-----------------------------------|-------------------------------------+
+                                    |
+        +---------------------------+---------------------------+
+        |                                                       |
+        v                                                       v
++-----------------------+   +-----------------------+   +-----------------------+
+|    MongoDB Atlas      |   |       Paystack        |   |      Cloudinary       |
+| (Database & Storage)  |   | (Payment Processing)  |   |    (Media Storage)    |
++-----------------------+   +-----------------------+   +-----------------------+
 ```
 
-The mobile app is the customer interface. The web dashboard is restricted to the business administrator. The Express API is the sole authority for business rules, authorization, pricing, order status, payment verification, and access to external services.
+### Strict Single-Vendor Boundary
+- The platform serves **one merchant/store only**.
+- There is **no multi-tenancy**, no `vendorId`, no multi-store routing, no vendor onboarding, and no marketplace commission logic.
+- All products, categories, orders, and configuration belong solely to the single merchant operator.
 
-## 2. Mobile architecture
+---
 
-The customer app will use React Native with Expo and Expo Router. File-based routes will separate public authentication screens from authenticated customer routes. UI components will call an Axios API client rather than access backend endpoints directly. Zustand will own client-side state such as the cart; Expo SecureStore will hold the JWT.
+## 2. Mobile Architecture
 
-Planned layout:
+The customer application is built with **React Native** and **Expo** using **Expo Router** for file-based routing.
 
+### Directory Layout
 ```text
 mobile/
 ├── app/
-│   ├── _layout.jsx
-│   ├── (auth)/
-│   └── (app)/
+│   ├── _layout.jsx                   # Root layout (fonts, theme, global providers)
+│   ├── (auth)/                       # Public authentication group
+│   │   ├── _layout.jsx
+│   │   ├── login.jsx                 # Customer login screen
+│   │   ├── register.jsx              # Customer registration screen
+│   │   └── forgot-password.jsx       # Password recovery screen
+│   └── (app)/                        # Authenticated customer group
+│       ├── _layout.jsx               # Protected navigation guard
+│       ├── (tabs)/                   # Primary bottom tab navigation
+│       │   ├── _layout.jsx
+│       │   ├── index.jsx             # Home / Catalog browsing
+│       │   ├── orders.jsx            # Customer order history
+│       │   └── profile.jsx           # Account management & addresses
+│       ├── product/
+│       │   └── [id].jsx              # Product detail screen
+│       ├── cart.jsx                  # Cart review & quantity adjustments
+│       ├── checkout.jsx              # Delivery details & Paystack trigger
+│       └── order/
+│           └── [id].jsx              # Real-time order status tracking
 └── src/
     ├── api/
-    ├── components/
-    ├── hooks/
+    │   └── client.js                 # Central Axios client with token interceptor
+    ├── components/                   # Reusable UI elements (Header, Card, Button, Input)
+    ├── hooks/                        # Custom React hooks (useAuth, useCart, useOrders)
     ├── store/
-    ├── context/
-    └── utils/
+    │   ├── authStore.js              # Zustand store for user session
+    │   └── cartStore.js              # Zustand store for cart items (persistent)
+    └── utils/                        # Currency formatters, date helpers, constants
 ```
 
-Expo Router provides the navigation container; no additional root `NavigationContainer` will be introduced. The public API base URL and Paystack public key will be supplied through Expo public environment configuration. No server secret may enter the mobile app.
+### Key Architectural Decisions
+- **Routing:** Expo Router provides file-based routing; no manual `NavigationContainer` is introduced.
+- **Client State:** Zustand manages client-side cart and user session. Cart state persists locally on device.
+- **Secure Token Storage:** Auth JWTs are stored securely via `expo-secure-store`.
+- **Public Configuration:** Uses `EXPO_PUBLIC_API_URL` and `EXPO_PUBLIC_PAYSTACK_PUBLIC_KEY`. No server-side secrets are bundled.
 
-## 3. Backend architecture
+---
 
-The backend will be a Node.js and Express REST API with a modular, layered structure:
+## 3. Backend Architecture
 
+The backend is a **Node.js (>=20)** and **Express.js** REST API designed with a clean, layered structure where routes remain thin, controllers coordinate HTTP input/output, and services encapsulate business logic.
+
+### Directory Layout
 ```text
 backend/
-└── src/
-    ├── config/       # Database and third-party configuration
-    ├── controllers/  # HTTP request and response handling
-    ├── middleware/   # Authentication, authorization, errors, limits
-    ├── models/       # Mongoose schemas
-    ├── routes/       # Endpoint declarations only
-    ├── services/     # Business rules and external integrations
-    ├── utils/        # Shared helpers
-    ├── validators/   # Zod request validation
-    ├── app.js
-    └── server.js
+├── src/
+│   ├── config/                       # Configuration modules (database, paystack, cloudinary)
+│   │   └── database.js               # Mongoose connection & lifecycle singleton
+│   ├── controllers/                  # Request/Response handlers
+│   │   ├── authController.js         # Register, login, profile, password reset
+│   │   ├── categoryController.js     # Public read, admin category CRUD
+│   │   ├── productController.js      # Public catalog, admin product CRUD
+│   │   ├── orderController.js        # Checkout, customer orders, admin status updates
+│   │   ├── paymentController.js      # Paystack initialize, verify, webhook
+│   │   └── uploadController.js       # Admin media upload to Cloudinary
+│   ├── middleware/                   # Express middleware
+│   │   ├── authMiddleware.js         # JWT verification (protect) & role check (authorize)
+│   │   ├── errorMiddleware.js        # Centralized error handler & 404 handler
+│   │   └── rateLimiters.js           # Global & route-specific rate limiting
+│   ├── models/                       # Mongoose schemas & data models
+│   │   ├── User.js                   # Customer & Admin accounts
+│   │   ├── Category.js               # Product grouping & menu sections
+│   │   ├── Product.js                # Menu/Store items with pricing & stock
+│   │   └── Order.js                  # Orders with immutable line item snapshots
+│   ├── routes/                       # Route definitions
+│   │   ├── healthRoutes.js           # GET /api/health
+│   │   ├── authRoutes.js             # /api/auth
+│   │   ├── categoryRoutes.js         # /api/categories
+│   │   ├── productRoutes.js          # /api/products
+│   │   ├── orderRoutes.js            # /api/orders
+│   │   ├── paymentRoutes.js          # /api/payments
+│   │   └── uploadRoutes.js           # /api/uploads
+│   ├── services/                     # Business logic & 3rd-party service integrations
+│   │   ├── authService.js
+│   │   ├── orderService.js           # Authoritative price calculations & order state machine
+│   │   ├── paystackService.js        # Paystack API transactions & webhook verification
+│   │   ├── cloudinaryService.js      # Media uploads and asset cleanup
+│   │   └── emailService.js           # Transactional emails & password recovery
+│   ├── utils/                        # Shared utility functions (tokens, formatters, helpers)
+│   ├── validators/                   # Zod request validation schemas
+│   ├── app.js                        # Express app configuration & middleware pipeline
+│   └── server.js                     # Process bootstrap, DB connection, graceful shutdown
+├── .env.example
+└── package.json
 ```
 
-Routes remain thin: controllers coordinate requests and services contain business logic. Central middleware will handle validation failures, expected application errors, unknown errors, 404 responses, security headers, CORS, logging, and rate limits.
+---
 
-## 4. Admin architecture
+## 4. Admin Architecture
 
-The admin dashboard will be a React and Vite single-page application using React Router. It will use the same API through an Axios client and present protected routes only to authenticated `ADMIN` users.
+The admin dashboard is a **React** single-page application built with **Vite** and styled with **Tailwind CSS**. It provides the merchant with complete control over catalog, inventory, orders, and customer activity.
 
-Planned layout:
-
+### Directory Layout
 ```text
 admin/
-└── src/
-    ├── api/
-    ├── components/
-    ├── pages/
-    ├── routes/
-    ├── features/
-    └── utils/
+├── src/
+│   ├── api/
+│   │   └── client.js                 # Axios client with JWT interceptor & error handling
+│   ├── components/                   # UI components (Sidebar, Navbar, DataTable, Modal, StatCard)
+│   ├── context/                      # AdminAuthContext for session management
+│   ├── pages/
+│   │   ├── Login.jsx                 # Admin authentication screen
+│   │   ├── Dashboard.jsx             # Key metrics (revenue, active orders, popular items)
+│   │   ├── Categories.jsx            # Category list & management
+│   │   ├── Products.jsx              # Product catalog, stock toggle & management
+│   │   ├── ProductForm.jsx           # Create/Edit product with Cloudinary image upload
+│   │   ├── Orders.jsx                # Order management with lifecycle status filters
+│   │   ├── OrderDetail.jsx           # Detailed order view & fulfillment transitions
+│   │   └── Customers.jsx             # Customer overview & order history
+│   ├── routes/
+│   │   └── AppRoutes.jsx             # React Router routing with admin role guard
+│   ├── utils/                        # Formatters, currency helpers, date utilities
+│   ├── App.jsx
+│   └── main.jsx
+├── .env.example
+├── index.html
+└── package.json
 ```
 
-The dashboard manages categories, products, orders, customers, and payment information. It never connects directly to MongoDB, Paystack, or Cloudinary.
+### Architectural Principles
+- **Protected Routing:** Unauthenticated requests or non-admin users are redirected to `/login`.
+- **Zero Direct Cloud/DB Access:** The admin dashboard communicates solely through authenticated endpoints on the Express REST API.
 
-## 5. Database architecture
+---
 
-MongoDB Atlas, accessed through Mongoose, will store the application data. Planned core entities are:
+## 5. Database Architecture
 
-| Entity | Responsibility |
-| --- | --- |
-| User | Customer or administrator identity and account state |
-| Category | Product grouping, visibility, order, and image metadata |
-| Product | Sellable item, price, availability, stock, category, and image metadata |
-| Order | Customer purchase snapshot, delivery details, calculated totals, payment reference, and lifecycle state |
+Data persistence is provided by **MongoDB Atlas** using **Mongoose ODM**.
 
-Products reference categories. Orders reference customers and store immutable item snapshots so historical orders remain accurate after a product changes. There is no vendor collection and no `vendorId` field.
+### Core Collections & Schemas
 
-## 6. Authentication architecture
+| Collection | Key Attributes | Responsibility |
+|---|---|---|
+| **Users** | `name`, `email`, `password` (hashed), `phone`, `role` (`CUSTOMER` \| `ADMIN`), `addresses`, `isActive` | Stores identity and delivery addresses for customers and the single admin. |
+| **Categories** | `name`, `slug`, `description`, `image` (`url`, `publicId`), `isActive`, `displayOrder` | Groups products into browsable sections (e.g. Meals, Drinks, Combos). |
+| **Products** | `name`, `slug`, `description`, `price`, `comparePrice`, `category` (ref), `images`, `isAvailable`, `stockQuantity`, `preparationTimeMinutes` | Sellable goods with prices, availability flags, and image metadata. |
+| **Orders** | `orderNumber`, `customer` (ref), `items` (snapshot array), `subtotal`, `deliveryFee`, `totalAmount`, `deliveryAddress`, `paymentStatus`, `paymentReference`, `orderStatus`, `statusHistory` | Legal record of customer purchase with immutable product snapshots. |
 
-The backend will hash passwords with bcrypt and issue signed JWTs after successful registration or login. JWT secrets and expiry values will be server-only environment values. Middleware will validate bearer tokens, attach the authenticated user, and reject inactive accounts.
+### Immutable Order Item Snapshots
+When an order is created, the product's current title, unit price, and image URL are copied directly into the order's `items` array. Subsequent edits or price changes to a product will never alter historical order records.
 
-The mobile app will store its token with Expo SecureStore. The admin dashboard will use a deliberately chosen secure token/session strategy during its implementation phase; it must not expose credentials in URLs or logs. API responses must omit password hashes and other sensitive fields.
+---
 
-## 7. Authorization architecture
+## 6. Authentication
 
-Two roles are planned: `CUSTOMER` and `ADMIN`.
+- **Password Security:** Passwords hashed using `bcryptjs` (salt rounds: 10). Password hashes have `select: false` on Mongoose queries and are never returned in responses.
+- **Tokens:** Signed JSON Web Tokens (JWT) containing `userId` and `role`. Expiration configured via `JWT_EXPIRES_IN` (default: `7d`).
+- **Client Token Handling:**
+  - Mobile: Stored securely in hardware-backed keychain via `expo-secure-store`.
+  - Admin: Stored securely in memory / local storage with interceptors to handle 401 expiration.
+- **Verification:** `protect` middleware extracts bearer token, validates signature, verifies active user in database, and attaches user object to `req.user`.
 
-- Customers may manage their own account and view only their own orders.
-- Administrators may manage products, categories, customers, and all orders.
-- Public users may read only active categories and available products.
+---
 
-Backend authorization is mandatory for all protected operations; hiding an admin control in either client is never treated as authorization.
+## 7. Authorization
 
-## 8. Payment architecture
-
-The backend will initialize Paystack transactions using the server-side secret key. The client receives only the data necessary to continue the hosted payment flow. Paystack webhooks and/or server-to-server verification will determine the final payment result.
-
-Order totals, prices, availability, payment status, and payment references are validated or calculated by the backend. A client-side "success" result never marks an order paid.
-
-## 9. Image upload architecture
-
-Product and category media will be processed by the backend and stored in Cloudinary. The backend will validate file type and size, retain secure delivery URLs and Cloudinary public IDs, and remove superseded assets where appropriate. Cloudinary credentials remain server-only.
-
-## 10. Order lifecycle
+P2G enforces strict **Role-Based Access Control (RBAC)** at the backend middleware layer:
 
 ```text
-Cart → checkout details → server-priced PENDING order
-     → Paystack initialization → verified payment
-     → PAID / CONFIRMED → PREPARING → READY
-     → OUT_FOR_DELIVERY → DELIVERED
+[ Incoming Request ]
+         |
+         v
++------------------+
+|  protect (JWT)   | -----> Extracts & verifies user identity
++--------+---------+
+         |
+         v
++------------------+
+|    authorize     | -----> Compares req.user.role with allowed roles
++--------+---------+
+         |
+         +---- Role is CUSTOMER? ---> Allowed: Read catalog, manage own cart/profile/orders
+         |
+         +---- Role is ADMIN?    ---> Allowed: Full catalog, order fulfillment, media, metrics
+         |
+         +---- Unauthorized?     ---> HTTP 403 Forbidden
 ```
 
-An order can become `CANCELLED` under validated business rules. Payment status is separate from fulfillment status and will support `PENDING`, `PAID`, `FAILED`, and `REFUNDED`.
+- Public access is permitted only for `GET /api/health`, active categories, and available products.
+- Customers can view and cancel only their own orders (`order.customer.equals(req.user._id)`).
 
-## 11. API architecture
+---
 
-All endpoints will be namespaced under `/api`. Initial domains are:
+## 8. Payment Architecture (Paystack)
+
+Payments are integrated with **Paystack** using a server-authoritative verification flow.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Customer as Mobile Customer
+    participant App as Mobile App
+    participant API as Express Backend
+    participant DB as MongoDB Atlas
+    participant Paystack as Paystack Gateway
+
+    Customer->>App: Proceed to Checkout
+    App->>API: POST /api/orders (items, address)
+    API->>DB: Fetch active products & calculate prices
+    API->>DB: Create Order (paymentStatus: PENDING)
+    API->>Paystack: POST /transaction/initialize (amount, email, reference)
+    Paystack-->>API: authorization_url, reference
+    API-->>App: orderId, authorization_url, reference
+    App->>Customer: Launch Paystack Checkout
+    Customer->>Paystack: Complete Payment
+    Paystack->>API: POST /api/payments/webhook (charge.success)
+    API->>API: Verify HMAC-SHA512 Webhook Signature
+    API->>Paystack: GET /transaction/verify/:reference
+    Paystack-->>API: Verification Confirmed
+    API->>DB: Update Order (paymentStatus: PAID, orderStatus: PAID)
+    API-->>Paystack: 200 OK
+    App->>API: GET /api/orders/:id
+    API-->>App: Order (PAID)
+```
+
+### Security Rules
+- **Server Price Authority:** Order totals, subtotal, delivery fees, and taxes are strictly calculated on the backend. Client-submitted prices are ignored.
+- **Server Verification Authority:** Client-side "success" redirects never mark an order as paid. Only verified webhook payloads or direct Paystack verification will transition an order to `PAID`.
+
+---
+
+## 9. Cloudinary Architecture
+
+Product and category images are stored in **Cloudinary** via backend-mediated uploads.
+
+- **Private Credentials:** `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and `CLOUDINARY_API_SECRET` remain server-only.
+- **Upload Flow:**
+  1. Admin selects image in Admin Dashboard.
+  2. Admin client posts `multipart/form-data` to backend `/api/uploads`.
+  3. Backend validates file type (JPEG, PNG, WebP) and size (max 5MB).
+  4. Backend streams image to Cloudinary folder (`p2g/products` or `p2g/categories`).
+  5. Cloudinary returns `secure_url` and `public_id`.
+  6. Backend returns `{ url, publicId }` to admin for saving with product/category.
+- **Asset Cleanup:** When products/categories are deleted or image is replaced, backend calls `cloudinary.uploader.destroy(publicId)` to prevent orphaned assets.
+
+---
+
+## 10. Order Lifecycle
+
+Orders progress through a strictly defined state machine with an audit log (`statusHistory`).
 
 ```text
-/api/health
-/api/auth
-/api/categories
-/api/products
-/api/orders
-/api/payments
-/api/uploads
+       [ PENDING ] (Order created, awaiting payment)
+           |
+           +-----------------------------+
+           | (Payment Verified)          | (Customer cancels before payment)
+           v                             v
+       [  PAID   ]                 [ CANCELLED ]
+           |
+           | (Admin confirms & starts prep)
+           v
+      [ PREPARING ]
+           |
+           | (Kitchen/Store finishes prep)
+           v
+       [  READY  ]
+           |
+           | (Dispatched with delivery courier)
+           v
+   [ OUT_FOR_DELIVERY ]
+           |
+           | (Courier hands over to customer)
+           v
+      [ DELIVERED ]
 ```
 
-The API will use JSON, appropriate status codes, pagination for collections, Zod validation for incoming data, and a consistent error response shape. Separate public read endpoints and protected administrative mutation endpoints prevent administrative fields from leaking to customers.
+### Status Definitions
+- **Payment Statuses:** `PENDING`, `PAID`, `FAILED`, `REFUNDED`.
+- **Order Fulfillment Statuses:**
+  - `PENDING`: Order created; awaiting Paystack confirmation.
+  - `PAID`: Payment verified; queued for store action.
+  - `PREPARING`: Store kitchen/staff is assembling the order.
+  - `READY`: Order packaged and waiting for dispatch or pickup.
+  - `OUT_FOR_DELIVERY`: Courier is en route to customer delivery address.
+  - `DELIVERED`: Order completed and received.
+  - `CANCELLED`: Order terminated; reason logged in history.
 
-## 12. Security architecture
+---
 
-- Store secrets only in ignored server-side environment files.
-- Keep `.env.example` files secret-free and safe to commit.
-- Use Helmet, CORS allowlists, request logging without credentials, and rate limiting.
-- Hash passwords; never log, return, or store plaintext passwords.
-- Verify JWTs and enforce roles on the backend.
-- Validate and sanitize incoming data.
-- Recalculate all prices and totals on the server.
-- Verify Paystack payments server-side.
-- Validate uploads and keep Cloudinary credentials private.
+## 11. API Architecture
 
-## 13. Environment-variable strategy
+All endpoints use JSON over HTTPS and are namespaced under `/api`.
 
-Each deployable application will have an `.env.example` listing only the variable names it needs. Real `.env` files will be ignored by Git.
+### Standard Response Envelope
+```json
+{
+  "success": true,
+  "message": "Optional human-readable message",
+  "data": { ... },
+  "pagination": {
+    "page": 1,
+    "limit": 20,
+    "total": 50,
+    "pages": 3
+  }
+}
+```
 
-The backend owns MongoDB credentials, JWT signing values, Paystack secret keys, Cloudinary credentials, email credentials, and allowed client URLs. The mobile app may contain only `EXPO_PUBLIC_API_URL` and the Paystack public key. The admin app may contain only `VITE_API_URL`.
+### Standard Error Envelope
+```json
+{
+  "success": false,
+  "message": "Error description",
+  "errors": [
+    { "field": "email", "message": "Invalid email address format" }
+  ]
+}
+```
 
-## 14. Development phases
+### Endpoint Registry
 
-1. Architecture and documentation
-2. Git and environment configuration
-3. Backend foundation and health check
-4. MongoDB connection foundation
-5. Backend authentication
-6. Mobile foundation and authentication
-7. Product and category backend
-8. Cloudinary image management
-9. Mobile product experience
-10. Cart
-11. Order system
-12. Mobile checkout
-13. Payment integration and verification
-14. Customer order history and detail
-15. Admin dashboard foundation
-16. Admin catalog management
-17. Admin order management
-18. Customer/profile management
-19. Notifications and operational refinements
-20. Testing, security review, deployment, and release hardening
+| Domain | Method & Route | Access | Purpose |
+|---|---|---|---|
+| **Health** | `GET /api/health` | Public | Verify server uptime & status |
+| **Auth** | `POST /api/auth/register` | Public | Register customer account |
+| | `POST /api/auth/login` | Public | Authenticate customer or admin |
+| | `GET /api/auth/me` | Protected | Get authenticated profile |
+| | `PUT /api/auth/profile` | Protected | Update profile & address |
+| **Categories** | `GET /api/categories` | Public | List active categories |
+| | `POST /api/categories` | Admin | Create category |
+| | `PUT /api/categories/:id` | Admin | Update category |
+| | `DELETE /api/categories/:id` | Admin | Delete category |
+| **Products** | `GET /api/products` | Public | List available products (search, filter, page) |
+| | `GET /api/products/:id` | Public | Get product details |
+| | `POST /api/products` | Admin | Create product |
+| | `PUT /api/products/:id` | Admin | Update product |
+| | `DELETE /api/products/:id` | Admin | Delete product |
+| **Orders** | `POST /api/orders` | Customer | Create order & calculate totals |
+| | `GET /api/orders/my-orders` | Customer | View customer order history |
+| | `GET /api/orders/:id` | Protected | View single order detail |
+| | `PUT /api/orders/:id/cancel` | Customer | Cancel pending order |
+| | `GET /api/orders` | Admin | View all store orders with filters |
+| | `PUT /api/orders/:id/status` | Admin | Update fulfillment lifecycle status |
+| **Payments** | `POST /api/payments/initialize` | Customer | Initialize Paystack transaction |
+| | `GET /api/payments/verify/:ref` | Protected | Verify payment status |
+| | `POST /api/payments/webhook` | Paystack | Webhook for payment events |
+| **Uploads** | `POST /api/uploads` | Admin | Upload media to Cloudinary |
 
-The detailed supplied plan contains additional sub-phases; they should continue in the same dependency order. Each phase must be tested and accepted before the next begins.
+---
 
-## 15. Testing strategy
+## 12. Security Architecture
 
-Backend work will use unit tests for services and validators, integration tests for routes, and isolated test data for database-dependent cases. Client work will be checked through component/interaction tests where practical and manual Expo device or emulator testing for routing, authentication recovery, cart behavior, checkout, and payment redirects.
+- **HTTP Security Headers:** Implemented via `helmet` (clickjacking, XSS, content-type sniffing protection).
+- **CORS Allowlist:** Origin restricted to `CLIENT_URL` and `ADMIN_URL` for web requests; allows native mobile non-origin calls.
+- **Rate Limiting:**
+  - Global: 300 requests per 15 minutes.
+  - Authentication routes: Strict rate limiter (10 requests per 15 minutes) to defeat brute-force credential stuffing.
+- **Input Validation & Sanitization:** Zod schemas validate every incoming request body, query parameter, and route parameter.
+- **Tamper-Proof Pricing:** Client-provided prices are never used in order calculations.
+- **Webhook Integrity:** Paystack webhook HMAC-SHA512 signatures validated with `PAYSTACK_WEBHOOK_SECRET` before processing.
+- **Environment Isolation:** Secrets exist solely in uncommitted `.env` files.
 
-Critical end-to-end paths are registration, login, browsing products, cart updates, order creation, payment verification, order status changes, and admin authorization. Security-sensitive negative cases must be tested alongside happy paths.
+---
 
-## 16. Deployment architecture
+## 13. Environment Strategy
 
-- **Backend:** Render or Railway, with environment values configured in the hosting provider.
-- **Database:** MongoDB Atlas with restricted network access and backups.
-- **Admin:** Vercel or Netlify, configured with the public API URL.
-- **Mobile:** Expo/EAS builds, configured only with public mobile settings.
+| Application | Environment File | Variables Defined |
+|---|---|---|
+| **Backend** | `backend/.env` | `NODE_ENV`, `PORT`, `APP_NAME`, `MONGODB_URI`, `JWT_SECRET`, `JWT_EXPIRES_IN`, `PAYSTACK_SECRET_KEY`, `PAYSTACK_PUBLIC_KEY`, `PAYSTACK_CALLBACK_URL`, `PAYSTACK_WEBHOOK_SECRET`, `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`, `CLIENT_URL`, `ADMIN_URL`, `EMAIL_*`, `PASSWORD_RESET_URL` |
+| **Mobile** | `mobile/.env` | `EXPO_PUBLIC_API_URL`, `EXPO_PUBLIC_PAYSTACK_PUBLIC_KEY` |
+| **Admin** | `admin/.env` | `VITE_API_URL` |
 
-Production CORS origins, webhook URLs, callback URLs, runtime logs, health checks, and deployment-specific environment values will be configured per environment. No production secrets are committed to source control.
+- `.env.example` files contain only key names and placeholders and remain safely tracked in source control.
+- Production `.env` files are never committed.
+
+---
+
+## 14. Development Workflow
+
+```text
+Phase 1: Architecture & Foundation (Current)
+    ├── Establish system design, environment templates, docs
+    └── Verify Express 5 server & database connection modules
+
+Phase 2: Backend Core Business Domains
+    ├── 2.1 User Model, JWT Authentication & RBAC Middleware
+    ├── 2.2 Category & Product Models, Validators & Catalog Endpoints
+    ├── 2.3 Cloudinary Media Upload Service
+    ├── 2.4 Server-Priced Order Engine & Status State Machine
+    └── 2.5 Paystack Checkout Initialization & Webhook Verification
+
+Phase 3: Customer Mobile App (Expo & Expo Router)
+    ├── 3.1 Expo setup with Expo Router & Axios client
+    ├── 3.2 Authentication screens & secure token persistence
+    ├── 3.3 Product catalog, category filtering, product detail
+    ├── 3.4 Zustand persistent Cart
+    └── 3.5 Checkout screen, Paystack payment launch, order tracking
+
+Phase 4: Admin Web Dashboard (React & Vite)
+    ├── 4.1 Vite + React SPA setup with Tailwind CSS
+    ├── 4.2 Protected Admin routing & login
+    ├── 4.3 Category & Product CRUD with Cloudinary image uploader
+    └── 4.4 Real-time order fulfillment status management
+
+Phase 5: Quality Assurance & Deployment Hardening
+    ├── Integration testing, security audit, edge case validation
+    └── Cloud hosting deployment (Render/Railway, Atlas, Vercel, EAS)
+```
+
+---
+
+## 15. Testing Strategy
+
+1. **Backend Integration Tests:**
+   - Supertest for REST endpoint integration testing.
+   - Authentication negative tests (expired tokens, tampered signatures, unauthorized role access).
+   - Order calculation verification (ensuring discounts, tax, and quantities total accurately).
+   - Paystack webhook signature verification tests.
+2. **Client Verification:**
+   - Mobile: User flow testing (Register -> Browse -> Add to Cart -> Checkout -> Payment -> Order Status).
+   - Admin: Operational flow testing (Add Product with Image -> Adjust Price -> Receive Order -> Progress Status).
+3. **Resilience & Edge Cases:**
+   - Out-of-stock item handling during checkout.
+   - Idempotent payment webhook processing (handling duplicate webhook deliveries safely).
+
+---
+
+## 16. Deployment Strategy
+
+```text
++-------------------+      +-------------------+      +-------------------+
+|  Mobile (Expo)    |      | Admin (Vercel)    |      | Backend (Render)  |
+|  - EAS Build      |      | - Vite React SPA  |      | - Express REST    |
+|  - Android APK/AAB|      | - Static CDN Host |      | - Node.js Runtime |
+|  - iOS IPA        |      | - VITE_API_URL    |      | - Auto Deploy     |
++-------------------+      +-------------------+      +---------+---------+
+                                                                |
+                                             +------------------+------------------+
+                                             |                                     |
+                                             v                                     v
+                                   +-------------------+                 +-------------------+
+                                   |   MongoDB Atlas   |                 | Cloudinary /      |
+                                   |   - M0 / Shared   |                 | Paystack Cloud    |
+                                   |   - IP Whitelist  |                 | - Managed SaaS    |
+                                   +-------------------+                 +-------------------+
+```
+
+- **Backend:** Deployed on Render or Railway with production environment variables set via dashboard.
+- **Database:** MongoDB Atlas cluster with restricted network IP allowlist and automated backups.
+- **Admin Dashboard:** Static SPA hosted on Vercel or Netlify with public `VITE_API_URL` injected at build time.
+- **Mobile Application:** Packaged using Expo Application Services (EAS Build) for Google Play and Apple App Store distribution.

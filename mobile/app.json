@@ -1,0 +1,23 @@
+{
+  "expo": {
+    "name": "P2G",
+    "slug": "p2g-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "p2g",
+    "userInterfaceStyle": "automatic",
+    "web": {
+      "output": "single",
+      "bundler": "metro"
+    },
+    "plugins": [
+      [
+        "expo-router",
+        {
+          "root": "app"
+        }
+      ],
+      "expo-secure-store"
+    ]
+  }
+}
