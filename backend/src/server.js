@@ -17,8 +17,8 @@ async function startServer() {
     process.exit(1);
   }
 
-  server = app.listen(port, () => {
-    console.info(`P2G API listening on port ${port} in ${process.env.NODE_ENV || 'development'} mode.`);
+  server = app.listen(port, '0.0.0.0', () => {
+    console.info(`P2G API listening on port ${port} (0.0.0.0) in ${process.env.NODE_ENV || 'development'} mode.`);
   });
 }
 

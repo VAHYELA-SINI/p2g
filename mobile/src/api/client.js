@@ -2,7 +2,7 @@ import axios from 'axios';
 import { storage } from '../utils/storage';
 
 // Read API URL from environment variable or fallback to local backend
-const baseURL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:5000/api';
+const baseURL = process.env.EXPO_PUBLIC_API_URL || 'http://172.20.10.8:5000/api';
 
 const apiClient = axios.create({
   baseURL,
