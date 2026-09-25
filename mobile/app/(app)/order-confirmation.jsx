@@ -11,6 +11,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { fetchOrderById, cancelOrder } from '../../src/api/ordersApi';
+import { initializePayment, verifyPayment } from '../../src/api/paymentsApi';
+import { openPaystackCheckout } from '../../src/utils/payment';
 import LoadingState from '../../src/components/LoadingState';
 import ErrorState from '../../src/components/ErrorState';
 import { safeBack } from '../../src/utils/navigation';
@@ -24,6 +26,7 @@ export default function OrderConfirmationScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState(null);
   const [isCancelling, setIsCancelling] = useState(false);
+  const [isProcessingPayment, setIsProcessingPayment] = useState(false);
 
   const loadOrder = useCallback(async () => {
     if (!orderId) return;
@@ -67,6 +70,51 @@ export default function OrderConfirmationScreen() {
         },
       ]
     );
+  };
+
+  const handlePayNow = async () => {
+    if (!order) return;
+    try {
+      setIsProcessingPayment(true);
+      const transaction = await initializePayment(order._id);
+      if (!transaction?.authorization_url) {
+        throw new Error('No authorization URL received from payment provider.');
+      }
+
+      await openPaystackCheckout(transaction.authorization_url);
+
+      Alert.alert(
+        'Complete Payment',
+        'Complete your payment on the Paystack checkout page. Once finished, tap "Verify Payment" to confirm your order.',
+        [
+          { text: 'Later', style: 'cancel' },
+          {
+            text: 'Verify Payment',
+            onPress: async () => {
+              try {
+                setIsLoading(true);
+                const verified = await verifyPayment(transaction.reference);
+                if (verified) {
+                  setOrder(verified);
+                  Alert.alert('Payment Successful', 'Your payment was verified and your order is confirmed!');
+                }
+              } catch (verifyErr) {
+                Alert.alert(
+                  'Verification Pending',
+                  verifyErr.message || 'Payment is still processing. Please pull down to refresh or check order tracking.'
+                );
+              } finally {
+                setIsLoading(false);
+              }
+            },
+          },
+        ]
+      );
+    } catch (err) {
+      Alert.alert('Payment Failed', err.message || 'Could not start Paystack payment.');
+    } finally {
+      setIsProcessingPayment(false);
+    }
   };
 
   return (
@@ -201,6 +249,24 @@ export default function OrderConfirmationScreen() {
             </View>
           </View>
 
+          {/* Direct Pay with Paystack CTA */}
+          {order.paymentStatus === 'PENDING' && order.orderStatus !== 'CANCELLED' && (
+            <TouchableOpacity
+              style={[styles.payNowBtn, isProcessingPayment && styles.disabledBtn]}
+              onPress={handlePayNow}
+              disabled={isProcessingPayment}
+              activeOpacity={0.85}
+            >
+              {isProcessingPayment ? (
+                <ActivityIndicator size="small" color={colors.white} />
+              ) : (
+                <Text style={styles.payNowBtnText}>
+                  💳 Pay Now with Paystack (₦{(order.totalAmount || 0).toLocaleString()})
+                </Text>
+              )}
+            </TouchableOpacity>
+          )}
+
           {/* Cancellation Option if still PENDING */}
           {order.orderStatus === 'PENDING' && (
             <TouchableOpacity
@@ -219,11 +285,13 @@ export default function OrderConfirmationScreen() {
 
           {/* Track Order Details */}
           <TouchableOpacity
-            style={styles.trackDetailsBtn}
+            style={order.paymentStatus === 'PENDING' ? styles.trackDetailsBtnSecondary : styles.trackDetailsBtn}
             onPress={() => router.push(`/(app)/order/${order._id}`)}
             activeOpacity={0.85}
           >
-            <Text style={styles.trackDetailsText}>📦 Track Order Details & Status</Text>
+            <Text style={order.paymentStatus === 'PENDING' ? styles.trackDetailsTextSecondary : styles.trackDetailsText}>
+              📦 Track Order Details & Status
+            </Text>
           </TouchableOpacity>
 
           {/* Return Home */}
@@ -464,6 +532,19 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontSize: 15,
   },
+  payNowBtn: {
+    backgroundColor: colors.black,
+    borderRadius: 14,
+    paddingVertical: 16,
+    alignItems: 'center',
+    marginBottom: 12,
+    ...shadows.md,
+  },
+  payNowBtnText: {
+    color: colors.white,
+    fontWeight: '800',
+    fontSize: 16,
+  },
   trackDetailsBtn: {
     backgroundColor: colors.black,
     borderRadius: 14,
@@ -476,6 +557,20 @@ const styles = StyleSheet.create({
     color: colors.white,
     fontWeight: '700',
     fontSize: 16,
+  },
+  trackDetailsBtnSecondary: {
+    backgroundColor: colors.grey100,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  trackDetailsTextSecondary: {
+    color: colors.primaryText,
+    fontWeight: '700',
+    fontSize: 15,
   },
   returnHomeBtn: {
     backgroundColor: colors.surface,

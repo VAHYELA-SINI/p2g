@@ -70,7 +70,7 @@ async function initializeTransaction(order, customerEmail) {
           callback_url: process.env.PAYSTACK_CALLBACK_URL || undefined,
           metadata: {
             orderId: order._id.toString(),
-            customerId: order.customer.toString(),
+            customerId: (order.customer?._id || order.customer).toString(),
           },
         }),
       });
@@ -250,9 +250,10 @@ async function processPaymentSuccess(transactionData) {
 
   // 4. Idempotency guard: If order is already PAID, return without duplicate mutations (Requirement 9 & 16)
   if (order.paymentStatus === 'PAID') {
+    const populated = await order.populate('customer', 'name email phone');
     return {
       success: true,
-      order,
+      order: populated,
       alreadyPaid: true,
       message: 'Order was already marked as PAID.',
     };

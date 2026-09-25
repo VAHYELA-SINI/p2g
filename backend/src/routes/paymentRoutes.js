@@ -21,6 +21,10 @@ const paymentInitLimiter = rateLimit({
 // Webhook endpoint (Public, guarded by HMAC SHA-512 signature in controller)
 router.post('/webhook', paymentController.handleWebhook);
 
+// Public payment callback redirect from Paystack checkout (handles /callback and /verify redirects)
+router.get('/callback', paymentController.handleCallback);
+router.get('/verify', paymentController.handleCallback);
+
 // Protected endpoints
 router.get('/', protect, authorize('ADMIN'), paymentController.getPayments);
 router.post('/initialize/:orderId', protect, paymentInitLimiter, paymentController.initializePayment);

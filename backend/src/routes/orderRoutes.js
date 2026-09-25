@@ -29,6 +29,7 @@ router.use(protect);
 // Customer & Admin order routes
 router.post('/', orderCreationLimiter, validateCreateOrder, orderController.createOrder);
 router.get('/', orderController.getOrders);
+router.get('/my-orders', orderController.getOrders);
 router.get('/stats', authorize('ADMIN'), orderController.getOrderStats);
 router.get('/:id', orderController.getOrderById);
 router.post('/:id/cancel', validateCancelOrder, orderController.cancelOrder);

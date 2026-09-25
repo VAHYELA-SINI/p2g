@@ -15,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { fetchOrderById, cancelOrder } from '../../../src/api/ordersApi';
 import { initializePayment, verifyPayment } from '../../../src/api/paymentsApi';
+import { openPaystackCheckout } from '../../../src/utils/payment';
 import OrderStatusTimeline from '../../../src/components/OrderStatusTimeline';
 import LoadingState from '../../../src/components/LoadingState';
 import ErrorState from '../../../src/components/ErrorState';
@@ -99,10 +100,8 @@ export default function OrderDetailsScreen() {
         throw new Error('No authorization URL received from payment provider.');
       }
 
-      const canOpen = await Linking.canOpenURL(transaction.authorization_url);
-      if (canOpen) {
-        await Linking.openURL(transaction.authorization_url);
-      }
+      // Robust checkout opening across Web, Android, and iOS
+      await openPaystackCheckout(transaction.authorization_url);
 
       Alert.alert(
         'Complete Payment',
